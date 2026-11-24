@@ -6,6 +6,20 @@ Candidates answer the basics once: location, work authorization, visa sponsorshi
 
 ![yourHR candidate workspace](docs/desktop.jpg)
 
+## Public trial
+
+**[Try yourHR online →](https://yourhr-beta.netlify.app/)** — free, public, and no signup required.
+
+The public version now has an isolated, no-signup browser demo for each visitor. Try candidate and recruiter screening, edit approved answers, post sample jobs, and reset your sandbox. The hosted demo makes no paid AI calls and does not contact real employers.
+
+The shared-account Supabase integration is included but is **not activated until the database and verified email delivery are configured**. See [public beta deployment](docs/public-beta.md) for the exact live scope, free-host setup, and remaining backend activation steps.
+
+```sh
+npm ci
+npm run build:trial
+npm run preview:trial
+```
+
 ## Run locally
 
 Requires **Node.js 24 or newer** and npm. SQLite is built into Node; no database service is needed.
@@ -38,7 +52,7 @@ Both commands bind to loopback, keeping this local prototype off your network by
 6. In **Candidate directory**, select a role and click **Connect our agents** to try recruiter-initiated screening.
 7. Visit **My agent** in the candidate workspace. Turn off auto-sharing for a fact, save, then start a screening for a different job: that answer now waits for approval.
 
-Demo accounts share state within this installation. The role switch deliberately signs into those demo accounts; it is not impersonation access to real accounts. To test separate users, sign out and **Create account** as a candidate or recruiter. New candidate profiles are private and undiscoverable by default.
+The UI demo keeps state in each browser; separate visitors do not share it. The legacy local API demo accounts remain shared inside the local SQLite installation. The role switch deliberately signs into those demo accounts; it is not impersonation access to real accounts. To test separate users, sign out and **Create account** as a candidate or recruiter. New candidate profiles are private and undiscoverable by default.
 
 ## What works
 
@@ -75,7 +89,7 @@ Reference: [OpenAI Responses API](https://developers.openai.com/api/reference/ty
 
 ## Architecture
 
-- **Next.js App Router, React, TypeScript** for the application.
+- **React, TypeScript, Vite for the hosted static trial; Next.js App Router for local development** for the application.
 - **Node `node:sqlite`** with WAL mode for local persistence.
 - **Zod** for server-side validation.
 - **scrypt** password hashing, opaque server-side sessions, HTTP-only SameSite cookies.

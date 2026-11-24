@@ -46,6 +46,13 @@ import {
   type Screening,
   type Field,
 } from "@/lib/types";
+import {
+  request,
+  getState,
+  demoActive,
+  staticTrial,
+  cloudEnabled,
+} from "@/lib/transport";
 const money = (n: number) => `$${Math.round(n / 1000)}k`;
 const statuses = {
   aligned: "Logistics aligned",
@@ -61,17 +68,7 @@ const initial: AppState = {
   mode: "demo",
   recruiterAgent: "",
 };
-type View = "jobs" | "inbox" | "agent" | "candidates" | "about";
-async function request(action: string, body: unknown) {
-  const res = await fetch(`/api/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Request failed");
-  return data;
-}
+type View = "jobs" | "inbox" | "agent" | "candidates" | "about" | "account";
 function Logo({ small = false }: { small?: boolean }) {
   return (
     <span className={`brand ${small ? "small" : ""}`}>
@@ -125,19 +122,21 @@ function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     ref.current?.showModal();
     const d = ref.current;
     const close = (e: Event) => {
       e.preventDefault();
-      onClose();
+      closeRef.current();
     };
     d?.addEventListener("cancel", close);
     return () => {
       d?.removeEventListener("cancel", close);
       d?.close();
     };
-  }, [onClose]);
+  }, []);
   return (
     <dialog
       ref={ref}
@@ -246,9 +245,7 @@ export default function Workspace() {
     [error, setError] = useState(""),
     [inboxFilter, setInboxFilter] = useState("all");
   const refresh = async () => {
-    const r = await fetch("/api/state", { cache: "no-store" });
-    if (!r.ok) throw new Error("Could not load your workspace.");
-    const d: AppState = await r.json();
+    const d = await getState();
     setData(d);
     return d;
   };
@@ -268,7 +265,9 @@ export default function Workspace() {
     try {
       const result = await request(action, body);
       await refresh();
-      if (message) setNotice(message);
+      if (result.verifyEmail)
+        setNotice("Check your email to confirm your account, then log in.");
+      else if (message) setNotice(message);
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -309,6 +308,14 @@ export default function Workspace() {
     (sum, s) => sum + s.checks.filter((c) => c.status === "pending").length,
     0,
   );
+  const needsHuman = screens.reduce(
+    (n, s) =>
+      n +
+      s.checks.filter(
+        (c) => c.status === "pending" || (recruiter && c.status === "review"),
+      ).length,
+    0,
+  );
   const answered = screens.reduce(
     (sum, s) =>
       sum +
@@ -346,11 +353,17 @@ export default function Workspace() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <a className="logo-link" href="/" aria-label="yourHR home">
+        <a className="logo-link" href="./" aria-label="yourHR home">
           <Logo />
         </a>
         <div className="workspace-label">YOUR WORKSPACE</div>
         <nav>
+          {cloudEnabled && data.user && !data.user.demo && (
+            <button className="nav-item" onClick={() => setView("account")}>
+              <Settings2 size={20} />
+              Account & privacy
+            </button>
+          )}
           {nav.map((n) => (
             <button
               key={n.id}
@@ -420,7 +433,9 @@ export default function Workspace() {
             </strong>
           </div>
           <div className="top-actions">
-            <span className="demo-label">Local V1</span>
+            <span className="demo-label">
+              {staticTrial ? "Public beta" : "Local V1"}
+            </span>
             {data.user?.demo && (
               <div className="role-switch" aria-label="Demo role">
                 <button
@@ -468,13 +483,15 @@ export default function Workspace() {
                   className="text-button"
                   onClick={() => setAuth("login")}
                 >
-                  Log in
+                  {staticTrial && !cloudEnabled ? "How it works" : "Log in"}
                 </button>
                 <button
                   className="button primary compact"
                   onClick={() => setAuth("register")}
                 >
-                  Create account
+                  {staticTrial && !cloudEnabled
+                    ? "Try yourHR"
+                    : "Create account"}
                 </button>
               </>
             )}
@@ -503,13 +520,42 @@ export default function Workspace() {
             </div>
           ) : (
             <>
+              {data.user?.demo && (
+                <div className="demo-banner">
+                  <div>
+                    <ShieldCheck size={18} />
+                    <span>
+                      <strong>Your private demo sandbox.</strong> Fictional
+                      people and jobs. Changes stay in this browser; nothing is
+                      sent to a real recruiter.
+                    </span>
+                  </div>
+                  <button
+                    className="text-button"
+                    onClick={async () => {
+                      if (
+                        window.confirm(
+                          "Reset this browser’s demo? This removes your sample edits and screenings.",
+                        )
+                      ) {
+                        await act("reset-demo", {}, "Demo reset");
+                        setView("jobs");
+                        setScreenId(null);
+                      }
+                    }}
+                  >
+                    Reset demo
+                  </button>
+                </div>
+              )}
               {!data.user && (
                 <div className="demo-banner">
                   <div>
                     <Sparkles size={18} />
                     <span>
                       <strong>Meet your new job-search teammate.</strong> Try
-                      the full experience with fictional demo accounts.
+                      both sides of a screening in your own sandbox. No signup
+                      needed.
                     </span>
                   </div>
                   <div className="demo-buttons">
@@ -787,7 +833,7 @@ export default function Workspace() {
                             <span>Screenings</span>
                           </div>
                           <div>
-                            <strong>{pending}</strong>
+                            <strong>{needsHuman}</strong>
                             <span>Need a human</span>
                           </div>
                         </div>
@@ -858,7 +904,7 @@ export default function Workspace() {
                         </div>
                         <div>
                           <span>Questions for a human</span>
-                          <strong>{pending}</strong>
+                          <strong>{needsHuman}</strong>
                         </div>
                       </div>
                       <div className="tabs">
@@ -1011,6 +1057,52 @@ export default function Workspace() {
                   )}
                 </>
               )}
+              {view === "account" && data.user && !data.user.demo && (
+                <section className="panel form-panel narrow-panel">
+                  <h1>Account & privacy</h1>
+                  <p>
+                    Your private profile is visible only to you. Recruiters see
+                    only answers you approve and your discovery information if
+                    you opt in. All public job posts are user-submitted and are
+                    not verified by yourHR.
+                  </p>
+                  <p>
+                    Deleting your account removes your profile, your jobs, and
+                    your screening conversations from this service. Copies
+                    already seen or saved by another person cannot be recalled.
+                  </p>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const confirmation = String(
+                        new FormData(e.currentTarget).get("confirmation"),
+                      );
+                      const r = await act(
+                        "delete-account",
+                        { confirmation },
+                        "Account deleted",
+                      );
+                      if (r) setView("jobs");
+                    }}
+                  >
+                    <Input label="Type DELETE to remove your account and data">
+                      <input
+                        name="confirmation"
+                        required
+                        pattern="DELETE"
+                        autoComplete="off"
+                      />
+                    </Input>
+                    <button
+                      className="button secondary"
+                      disabled={busy}
+                      style={{ marginTop: 16 }}
+                    >
+                      Delete my account
+                    </button>
+                  </form>
+                </section>
+              )}
               {view === "about" && <About />}
             </>
           )}
@@ -1081,6 +1173,52 @@ export default function Workspace() {
                 ))}
               </>
             )}
+            {error && (
+              <p className="inline-error" role="alert">
+                {error}
+              </p>
+            )}
+            {cloudEnabled && data.user && !data.user.demo && (
+              <div className="demo-buttons">
+                <button
+                  className="text-button"
+                  onClick={async () => {
+                    const reason = window.prompt(
+                      "Describe the problem with this job (5–1000 characters). Do not include sensitive information.",
+                    );
+                    if (reason)
+                      await act(
+                        "report",
+                        { jobId: job.id, reason },
+                        "Report received for review",
+                      );
+                  }}
+                >
+                  Report this job
+                </button>
+                {job.recruiterId === data.user.id && (
+                  <button
+                    className="text-button"
+                    onClick={async () => {
+                      if (
+                        window.confirm(
+                          "Remove this job and its screening conversations?",
+                        )
+                      ) {
+                        const r = await act(
+                          "close-job",
+                          { jobId: job.id },
+                          "Job removed",
+                        );
+                        if (r) setJob(null);
+                      }
+                    }}
+                  >
+                    Remove this job
+                  </button>
+                )}
+              </div>
+            )}
             <div className="screen-cta">
               <div className="bot-icon">
                 <Bot size={24} />
@@ -1141,20 +1279,54 @@ export default function Workspace() {
           }
           onClose={() => setAuth(null)}
         >
-          <AuthForm
-            mode={auth}
-            busy={busy}
-            error={error}
-            onSwitch={() => setAuth(auth === "register" ? "login" : "register")}
-            onSubmit={async (body) => {
-              const r = await act(auth, body);
-              if (r) {
-                setAuth(null);
-                setView(auth === "register" ? "agent" : "jobs");
+          {staticTrial && !cloudEnabled ? (
+            <div className="form-panel">
+              <h2>Try the complete screening flow.</h2>
+              <p>
+                Pick either role. Your sample profiles, jobs, and conversations
+                stay in this browser. This public demo does not collect account
+                credentials or connect you to real employers.
+              </p>
+              <div className="demo-buttons">
+                <button
+                  className="button primary"
+                  onClick={() => demo("candidate")}
+                >
+                  Try candidate demo
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => demo("recruiter")}
+                >
+                  Try recruiter demo
+                </button>
+              </div>
+              <p className="small-text">
+                Use fictional information. You can clear your sandbox with Reset
+                demo. Real-account signup will open after hosted authentication
+                is configured.
+              </p>
+            </div>
+          ) : (
+            <AuthForm
+              mode={auth}
+              busy={busy}
+              error={error}
+              onSwitch={() =>
+                setAuth(auth === "register" ? "login" : "register")
               }
-            }}
-            onDemo={demo}
-          />
+              onSubmit={async (body) => {
+                const r = await act(auth, body);
+                if (r) {
+                  setAuth(null);
+                  setView(
+                    auth === "register" && !r.verifyEmail ? "agent" : "jobs",
+                  );
+                }
+              }}
+              onDemo={demo}
+            />
+          )}
         </Modal>
       )}
       {posting && (
@@ -1171,7 +1343,9 @@ export default function Workspace() {
               const r = await act(
                 "job",
                 body,
-                "Your opportunity is live on the local board",
+                data.user?.demo
+                  ? "Demo opportunity added to your sandbox"
+                  : "Your opportunity is live",
               );
               if (r) setPosting(false);
             }}
@@ -1878,7 +2052,7 @@ function AuthForm({
         label="Password"
         hint={
           mode === "register"
-            ? "At least 10 characters. This account is stored on your local server."
+            ? "At least 10 characters. Confirm your email to activate your account."
             : undefined
         }
       >
@@ -2147,14 +2321,16 @@ function About() {
         <p>
           The built-in agents use a structured, deterministic
           question-and-answer protocol. They don’t guess facts or make hiring
-          decisions. Without an API key, the entire workflow runs in demo mode.
-          With a server-side OpenAI key, an optional AI-written recap summarizes
-          shared answers; the underlying checks stay deterministic.
+          decisions. The public trial runs without paid AI calls. Its agents
+          only exchange approved facts. An optional AI recap is available in the
+          local developer version.
         </p>
         <p>
           There are no external agent connections yet. Demo accounts and job
-          listings are fictional and shared within this local installation. Real
-          accounts are stored in SQLite on your machine.
+          listings are fictional and isolated in this browser.{" "}
+          {cloudEnabled
+            ? "Real accounts use Supabase authentication and storage."
+            : "Real-account signup is not open on this demo yet."}
         </p>
         <h3>A deliberately small first step</h3>
         <p>
